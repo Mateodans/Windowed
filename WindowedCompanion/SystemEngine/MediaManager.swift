@@ -250,23 +250,8 @@ public class MediaManager {
             return cached
         }
         
-        // Fast synchronous fetch with 1.5s timeout
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 1.5
-        
-        let semaphore = DispatchSemaphore(value: 0)
-        var downloadedData: Data? = nil
-        
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                downloadedData = data
-            }
-            semaphore.signal()
-        }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + 1.5)
-        
-        guard let data = downloadedData, let compressed = processAndCompressArtwork(data) else {
+        guard let data = try? Data(contentsOf: url),
+              let compressed = processAndCompressArtwork(data) else {
             return nil
         }
         

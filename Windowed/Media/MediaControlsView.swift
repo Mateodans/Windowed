@@ -61,13 +61,26 @@ struct MediaControlsView: View {
         decodedArtwork = image
     }
     
+    private var displayedArtwork: UIImage? {
+        if let decodedArtwork {
+            return decodedArtwork
+        }
+        if let base64 = mediaStore.state.albumArtBase64 ?? connectionManager.currentMedia.albumArtBase64,
+           !base64.isEmpty,
+           let data = Data(base64Encoded: base64),
+           let image = UIImage(data: data) {
+            return image
+        }
+        return nil
+    }
+    
     // MARK: - Collapsed Mini-Pill (Compact State)
     
     private var collapsedBar: some View {
         HStack(spacing: 10) {
             // Album Art / Mini Music Note
             ZStack {
-                if let uiImage = decodedArtwork {
+                if let uiImage = displayedArtwork {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
@@ -158,7 +171,7 @@ struct MediaControlsView: View {
             HStack(spacing: 12) {
                 // Album Art / Note Icon
                 ZStack {
-                    if let uiImage = decodedArtwork {
+                    if let uiImage = displayedArtwork {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFill()
