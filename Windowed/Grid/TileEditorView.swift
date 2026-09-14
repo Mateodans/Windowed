@@ -244,7 +244,7 @@ struct TileEditorView: View {
         case .shortcut:
             ShortcutPickerView(selectedShortcutName: $shortcutName, selectedLabel: $label, selectedIconSystemName: $iconSystemName)
         case .website:
-            WebsiteURLPickerView(urlString: $urlString, label: $label)
+            WebsiteURLPickerView(urlString: $urlString, label: $label, iconBase64: $iconBase64)
         case .emoji:
             EmojiPickerView(selectedEmoji: $emoji, label: $label)
         }
@@ -355,7 +355,7 @@ struct TileEditorView: View {
             type: tileType,
             label: finalLabel,
             iconSystemName: iconSystemName.isEmpty ? resolvedIconSystemName : iconSystemName,
-            iconBase64: tileType == .app ? iconBase64 : nil,
+            iconBase64: (tileType == .app || tileType == .website) ? iconBase64 : nil,
             urlString: tileType == .website ? resolvedURL : nil,
             bundleID: tileType == .app ? bundleID : nil,
             shortcutName: tileType == .shortcut ? shortcutName : nil,
@@ -713,6 +713,10 @@ struct ShortcutPickerView: View {
 struct WebsiteURLPickerView: View {
     @Binding var urlString: String
     @Binding var label: String
+    @Binding var iconBase64: String?
+    
+    @State private var isResolvingFavicon: Bool = false
+    @State private var fetchTask: Task<Void, Never>? = nil
     
     private let popularSites: [(name: String, url: String, icon: String)] = [
         ("GitHub", "https://github.com", "chevron.left.forwardslash.chevron.right"),
@@ -729,15 +733,48 @@ struct WebsiteURLPickerView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("DIRECCIÓN DEL SITIO WEB")
-                .font(.caption.bold())
-                .foregroundStyle(Constants.Colors.textSecondaryOnDark)
-                .padding(.leading, 4)
+            HStack {
+                Text("DIRECCIÓN DEL SITIO WEB")
+                    .font(.caption.bold())
+                    .foregroundStyle(Constants.Colors.textSecondaryOnDark)
+                
+                Spacer()
+                
+                if isResolvingFavicon {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Buscando favicon...")
+                            .font(.caption2)
+                            .foregroundStyle(Constants.Colors.gold)
+                    }
+                } else if iconBase64 != nil {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Constants.Colors.connectedGreen)
+                        Text("Favicon listo")
+                            .font(.caption2.bold())
+                            .foregroundStyle(Constants.Colors.connectedGreen)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
             
             // URL Input Box
             HStack(spacing: 8) {
-                Image(systemName: "link")
-                    .foregroundStyle(Constants.Colors.accent)
+                if let base64 = iconBase64,
+                   let data = Data(base64Encoded: base64),
+                   let uiImg = UIImage(data: data) {
+                    Image(uiImage: uiImg)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else {
+                    Image(systemName: "link")
+                        .foregroundStyle(Constants.Colors.accent)
+                }
                 
                 TextField("https://ejemplo.com", text: $urlString)
                     .textFieldStyle(.plain)
@@ -747,12 +784,16 @@ struct WebsiteURLPickerView: View {
                     .foregroundStyle(Constants.Colors.textPrimary)
                     .onChange(of: urlString) { _, newValue in
                         autoUpdateLabel(from: newValue)
+                        resolveFaviconDebounced(for: newValue)
                     }
                 
                 if !urlString.isEmpty {
                     Button(action: {
                         urlString = ""
                         label = ""
+                        iconBase64 = nil
+                        fetchTask?.cancel()
+                        isResolvingFavicon = false
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(Constants.Colors.textTertiary)
@@ -793,6 +834,7 @@ struct WebsiteURLPickerView: View {
                                 HapticManager.selection()
                                 urlString = site.url
                                 label = site.name
+                                resolveFaviconImmediate(for: site.url)
                             }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: site.icon)
@@ -829,6 +871,11 @@ struct WebsiteURLPickerView: View {
         .padding(12)
         .background(Constants.Colors.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Constants.Colors.cardBorder, lineWidth: 1))
+        .onAppear {
+            if iconBase64 == nil && !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                resolveFaviconImmediate(for: urlString)
+            }
+        }
     }
     
     private func pasteFromClipboard() {
@@ -836,6 +883,7 @@ struct WebsiteURLPickerView: View {
         if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !clip.isEmpty {
             urlString = clip
             autoUpdateLabel(from: clip)
+            resolveFaviconImmediate(for: clip)
         }
     }
     
@@ -848,6 +896,51 @@ struct WebsiteURLPickerView: View {
             let clean = host.replacingOccurrences(of: "www.", with: "")
             if let first = clean.split(separator: ".").first {
                 label = String(first).capitalized
+            }
+        }
+    }
+    
+    private func resolveFaviconDebounced(for url: String) {
+        fetchTask?.cancel()
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            iconBase64 = nil
+            isResolvingFavicon = false
+            return
+        }
+        
+        isResolvingFavicon = true
+        fetchTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            
+            let (base64, _) = await FaviconService.shared.fetchFavicon(for: trimmed)
+            guard !Task.isCancelled else { return }
+            
+            await MainActor.run {
+                if let base64 {
+                    self.iconBase64 = base64
+                }
+                self.isResolvingFavicon = false
+            }
+        }
+    }
+    
+    private func resolveFaviconImmediate(for url: String) {
+        fetchTask?.cancel()
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        isResolvingFavicon = true
+        fetchTask = Task {
+            let (base64, _) = await FaviconService.shared.fetchFavicon(for: trimmed)
+            guard !Task.isCancelled else { return }
+            
+            await MainActor.run {
+                if let base64 {
+                    self.iconBase64 = base64
+                }
+                self.isResolvingFavicon = false
             }
         }
     }

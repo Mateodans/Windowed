@@ -45,7 +45,9 @@ public class CommandExecutor: ObservableObject {
             
         case .layoutWindow(let windowID, let layout):
             summary = "Acomodar ventana (\(layout.displayName))"
-            success = windowManager.layoutWindow(windowID: windowID, layout: layout)
+            let opResult = windowManager.layoutWindowWithResult(windowID: windowID, layout: layout)
+            success = opResult.isSuccess
+            details = opResult.userFacingMessage
             
         case .media(let action):
             summary = "Multimedia: \(action.rawValue)"

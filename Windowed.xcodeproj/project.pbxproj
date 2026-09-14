@@ -29,6 +29,7 @@
 		84ADCCC4993954C1EA19FFA7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 839579A82BBAE520275FD6DB /* SettingsView.swift */; };
 		E87E1B882BDDDDC13F0F6FBA /* ConnectionStatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB506BB8E7042A56DF463C48 /* ConnectionStatusBadge.swift */; };
 		740AC1570CB5802C2375E4A9 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2565052BA244C26282609A39 /* Constants.swift */; };
+		7F17DB148C3ADC63FECB0B62 /* FaviconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F37CA601676BC1504E77937 /* FaviconService.swift */; };
 		5DC7DD18CB4FC6337621FC47 /* FloatingNavPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E8E90C6082A791406D47823 /* FloatingNavPill.swift */; };
 		E4BD35F015199489934BB7AD /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC9EC78D88B77BBB11CF3057 /* HapticManager.swift */; };
 		3637D1767B278A3D5D5C00A6 /* IconCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DE53546BA5AD246AA77B881 /* IconCache.swift */; };
@@ -82,6 +83,7 @@
 		839579A82BBAE520275FD6DB /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		BB506BB8E7042A56DF463C48 /* ConnectionStatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusBadge.swift; sourceTree = "<group>"; };
 		2565052BA244C26282609A39 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		5F37CA601676BC1504E77937 /* FaviconService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconService.swift; sourceTree = "<group>"; };
 		9E8E90C6082A791406D47823 /* FloatingNavPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingNavPill.swift; sourceTree = "<group>"; };
 		AC9EC78D88B77BBB11CF3057 /* HapticManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManager.swift; sourceTree = "<group>"; };
 		4DE53546BA5AD246AA77B881 /* IconCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconCache.swift; sourceTree = "<group>"; };
@@ -239,6 +241,7 @@
 			children = (
 				BB506BB8E7042A56DF463C48 /* ConnectionStatusBadge.swift */,
 				2565052BA244C26282609A39 /* Constants.swift */,
+				5F37CA601676BC1504E77937 /* FaviconService.swift */,
 				9E8E90C6082A791406D47823 /* FloatingNavPill.swift */,
 				AC9EC78D88B77BBB11CF3057 /* HapticManager.swift */,
 				4DE53546BA5AD246AA77B881 /* IconCache.swift */,
@@ -369,6 +372,7 @@
 				84ADCCC4993954C1EA19FFA7 /* SettingsView.swift in Sources */,
 				E87E1B882BDDDDC13F0F6FBA /* ConnectionStatusBadge.swift in Sources */,
 				740AC1570CB5802C2375E4A9 /* Constants.swift in Sources */,
+				7F17DB148C3ADC63FECB0B62 /* FaviconService.swift in Sources */,
 				5DC7DD18CB4FC6337621FC47 /* FloatingNavPill.swift in Sources */,
 				E4BD35F015199489934BB7AD /* HapticManager.swift in Sources */,
 				3637D1767B278A3D5D5C00A6 /* IconCache.swift in Sources */,

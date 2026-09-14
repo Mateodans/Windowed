@@ -38,6 +38,8 @@ public class ServerManager: ObservableObject {
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "com.windowed.companion.server", qos: .userInitiated)
     private var stateBroadcastTimer: AnyCancellable?
+    private var appActivationObserver: NSObjectProtocol?
+    private var appLastUsedTimestamps: [String: Date] = [:]
     
     public init() {
         let savedMacId = UserDefaults.standard.string(forKey: "windowed.companion.macId") ?? UUID().uuidString
@@ -107,6 +109,20 @@ public class ServerManager: ObservableObject {
             listener.start(queue: queue)
             self.listener = listener
             
+            // Observe application switches to track real history timestamps
+            appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let self = self,
+                      let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      let bundleID = app.bundleIdentifier else { return }
+                
+                self.appLastUsedTimestamps[bundleID] = Date()
+                self.broadcastCurrentState()
+            }
+            
             startStateBroadcaster()
         } catch {
             logger.error("Failed to create NWListener: \(error.localizedDescription)")
@@ -115,6 +131,11 @@ public class ServerManager: ObservableObject {
     }
     
     public func stop() {
+        if let observer = appActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appActivationObserver = nil
+        }
+        
         stateBroadcastTimer?.cancel()
         stateBroadcastTimer = nil
         
@@ -172,18 +193,41 @@ public class ServerManager: ObservableObject {
             $0.activationPolicy == .regular && !$0.isTerminated
         }
         
-        return running.prefix(12).map { app in
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           let bundleID = frontmost.bundleIdentifier {
+            if appLastUsedTimestamps[bundleID] == nil {
+                appLastUsedTimestamps[bundleID] = Date()
+            }
+        }
+        
+        var recents: [RecentApp] = []
+        var fallbackOffset: TimeInterval = 60
+        
+        for app in running {
             let bundleID = app.bundleIdentifier ?? "app-\(app.processIdentifier)"
             let name = app.localizedName ?? "App"
             let (iconBase64, _) = SystemIcons.iconBase64AndHash(for: bundleID)
-            return RecentApp(
+            
+            let lastUsed: Date
+            if let recorded = appLastUsedTimestamps[bundleID] {
+                lastUsed = recorded
+            } else {
+                let initial = Date().addingTimeInterval(-fallbackOffset)
+                appLastUsedTimestamps[bundleID] = initial
+                fallbackOffset += 180
+                lastUsed = initial
+            }
+            
+            recents.append(RecentApp(
                 bundleID: bundleID,
                 name: name,
                 iconBase64: iconBase64,
-                lastUsed: Date(),
+                lastUsed: lastUsed,
                 isPinned: false
-            )
+            ))
         }
+        
+        return recents.sorted(by: { $0.lastUsed > $1.lastUsed })
     }
     
     private func startStateBroadcaster() {

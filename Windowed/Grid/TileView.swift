@@ -10,6 +10,7 @@ struct TileView: View {
     @EnvironmentObject private var connectionManager: ConnectionManager
     @State private var isPressed = false
     @State private var jiggleAngle: Double = 0
+    @State private var dynamicFavicon: UIImage? = nil
     
     // Icon squircle badge sizing (Substantially larger, high visual prominence)
     private var iconSize: CGFloat {
@@ -76,6 +77,18 @@ struct TileView: View {
                 }
             } else {
                 jiggleAngle = 0
+            }
+        }
+        .task(id: tile.urlString) {
+            if tile.type == .website, dynamicFavicon == nil, let urlStr = tile.urlString, !urlStr.isEmpty {
+                if tile.iconBase64 == nil {
+                    let (_, img) = await FaviconService.shared.fetchFavicon(for: urlStr)
+                    if let img {
+                        await MainActor.run {
+                            dynamicFavicon = img
+                        }
+                    }
+                }
             }
         }
     }
@@ -188,27 +201,66 @@ struct TileView: View {
             .shadow(color: Color.purple.opacity(0.35), radius: 6, y: 3)
             
         case .website:
-            ZStack {
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(
-                        LinearGradient(
-                            colors: [Constants.Colors.accent.opacity(0.9), Color(red: 0.15, green: 0.45, blue: 0.75)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+            if let image = resolvedWebsiteIcon {
+                // Real Website Favicon inside Liquid Glass Squircle
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: corner)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.white.opacity(0.16), Color.white.opacity(0.04)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
                         )
-                    )
-                    .frame(width: size, height: size)
-                
-                Image(systemName: tile.systemImage)
-                    .font(.system(size: size * 0.54, weight: .bold))
-                    .foregroundStyle(.white)
-                    .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+                        .frame(width: size, height: size)
+                    
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: size * 0.58, height: size * 0.58)
+                        .clipShape(RoundedRectangle(cornerRadius: corner * 0.5))
+                        .shadow(color: Color.black.opacity(0.25), radius: 3, y: 1.5)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: corner)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.35), Constants.Colors.gold.opacity(0.3), Color.white.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.35), radius: 6, y: 3)
+            } else {
+                // Standard fallback with blue gradient & globe
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(
+                            LinearGradient(
+                                colors: [Constants.Colors.accent.opacity(0.9), Color(red: 0.15, green: 0.45, blue: 0.75)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: size, height: size)
+                    
+                    Image(systemName: tile.systemImage)
+                        .font(.system(size: size * 0.54, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: corner)
+                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                )
+                .shadow(color: Constants.Colors.accent.opacity(0.35), radius: 6, y: 3)
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: corner)
-                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
-            )
-            .shadow(color: Constants.Colors.accent.opacity(0.35), radius: 6, y: 3)
             
         case .emoji:
             ZStack {
@@ -283,6 +335,20 @@ struct TileView: View {
             return image
         }
         
+        return nil
+    }
+    
+    // MARK: - Dynamic Website Favicon Resolution
+    
+    private var resolvedWebsiteIcon: UIImage? {
+        if let dynamicFavicon {
+            return dynamicFavicon
+        }
+        if let base64 = tile.iconBase64,
+           let data = Data(base64Encoded: base64),
+           let image = UIImage(data: data) {
+            return image
+        }
         return nil
     }
 }

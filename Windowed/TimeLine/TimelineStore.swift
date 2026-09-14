@@ -1,55 +1,116 @@
 import Foundation
 import Combine
+import SwiftUI
 
 class TimelineStore: ObservableObject {
     @Published var recentApps: [RecentApp] = []
     
+    private let pinnedStorageKey = "windowed.pinnedAppsV2"
+    
+    var pinnedApps: [RecentApp] {
+        recentApps.filter { $0.isPinned }.sorted(by: { $0.lastUsed > $1.lastUsed })
+    }
+    
+    var unpinnedRecentApps: [RecentApp] {
+        recentApps.filter { !$0.isPinned }.sorted(by: { $0.lastUsed > $1.lastUsed })
+    }
+    
     var sortedApps: [RecentApp] {
-        let pinned = recentApps.filter { $0.isPinned }.sorted(by: { $0.name < $1.name })
-        let unpinned = recentApps.filter { !$0.isPinned }.sorted(by: { $0.lastUsed > $1.lastUsed })
-        return pinned + unpinned
+        pinnedApps + unpinnedRecentApps
+    }
+    
+    init() {
+        loadPersistedPinnedApps()
     }
     
     func update(from connectionManager: ConnectionManager) {
-        // Merge with existing pinned state
-        let newApps = connectionManager.recentApps
-        for app in newApps {
-            if let existingIdx = recentApps.firstIndex(where: { $0.bundleID == app.bundleID }) {
-                // Keep pin state, update timestamp
-                recentApps[existingIdx].lastUsed = app.lastUsed
-                recentApps[existingIdx].name = app.name
+        let incoming = connectionManager.recentApps
+        guard !incoming.isEmpty else { return }
+        
+        // Retain any existing pinned apps
+        var merged = recentApps.filter { $0.isPinned }
+        
+        for app in incoming {
+            if let existingPinnedIdx = merged.firstIndex(where: { $0.bundleID == app.bundleID }) {
+                // Update metadata for pinned app
+                merged[existingPinnedIdx].name = app.name
+                if let icon = app.iconBase64 {
+                    merged[existingPinnedIdx].iconBase64 = icon
+                }
+                if app.lastUsed > merged[existingPinnedIdx].lastUsed {
+                    merged[existingPinnedIdx].lastUsed = app.lastUsed
+                }
+            } else if let existingUnpinnedIdx = recentApps.firstIndex(where: { $0.bundleID == app.bundleID && !$0.isPinned }) {
+                var updated = recentApps[existingUnpinnedIdx]
+                updated.name = app.name
+                if let icon = app.iconBase64 {
+                    updated.iconBase64 = icon
+                }
+                if app.lastUsed > updated.lastUsed {
+                    updated.lastUsed = app.lastUsed
+                }
+                merged.append(updated)
             } else {
-                recentApps.append(app)
+                merged.append(app)
             }
         }
-        savePinnedState()
+        
+        recentApps = merged
+        savePersistedPinnedApps()
     }
     
     func togglePin(_ app: RecentApp) {
         if let idx = recentApps.firstIndex(where: { $0.bundleID == app.bundleID }) {
             recentApps[idx].isPinned.toggle()
-            savePinnedState()
+            savePersistedPinnedApps()
+        } else {
+            var newApp = app
+            newApp.isPinned = true
+            recentApps.append(newApp)
+            savePersistedPinnedApps()
+        }
+    }
+    
+    func openApp(_ app: RecentApp, connectionManager: ConnectionManager) {
+        HapticManager.impact(.medium)
+        connectionManager.send(command: .openApp(bundleID: app.bundleID))
+        
+        if let idx = recentApps.firstIndex(where: { $0.bundleID == app.bundleID }) {
+            recentApps[idx].lastUsed = Date()
+            savePersistedPinnedApps()
         }
     }
     
     func relativeTime(for date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        let elapsed = max(0, Date().timeIntervalSince(date))
+        
+        if elapsed < 60 {
+            return "Ahora"
+        } else if elapsed < 3600 {
+            let mins = max(1, Int(elapsed / 60))
+            return "Hace \(mins) min"
+        } else if elapsed < 86400 {
+            let hours = max(1, Int(elapsed / 3600))
+            return "Hace \(hours) h"
+        } else {
+            let days = max(1, Int(elapsed / 86400))
+            return "Hace \(days) d"
+        }
     }
     
-    // Persist only pinned bundleIDs
-    private func savePinnedState() {
-        let pinnedIDs = recentApps.filter { $0.isPinned }.map { $0.bundleID }
-        UserDefaults.standard.set(pinnedIDs, forKey: "windowed.pinnedApps")
+    // MARK: - Persistence of Pinned Favorites
+    
+    private func savePersistedPinnedApps() {
+        let pinned = recentApps.filter { $0.isPinned }
+        if let data = try? JSONEncoder().encode(pinned) {
+            UserDefaults.standard.set(data, forKey: pinnedStorageKey)
+        }
     }
     
-    func loadPinnedState() {
-        let pinnedIDs = UserDefaults.standard.stringArray(forKey: "windowed.pinnedApps") ?? []
-        for id in pinnedIDs {
-            if let idx = recentApps.firstIndex(where: { $0.bundleID == id }) {
-                recentApps[idx].isPinned = true
-            }
+    private func loadPersistedPinnedApps() {
+        if let data = UserDefaults.standard.data(forKey: pinnedStorageKey),
+           let pinned = try? JSONDecoder().decode([RecentApp].self, from: data) {
+            self.recentApps = pinned
         }
     }
 }

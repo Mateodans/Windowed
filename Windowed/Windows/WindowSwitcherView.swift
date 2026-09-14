@@ -7,13 +7,15 @@ struct WindowSwitcherView: View {
     @State private var isLoading = true
     @State private var selectedWindowForLayout: MacWindow?
     @State private var selectedAppName = ""
+    @State private var lastFocusedFeedback: String? = nil
+    @State private var expandedAppIDs: Set<String> = []
     
     var body: some View {
         ZStack {
             Constants.Colors.background.ignoresSafeArea()
             
             VStack(spacing: 8) {
-                // Header Bar inside Tab: Enlarged Title & Active Count (No reload icon, cohesive spacing)
+                // Header Bar: Enlarged Title & Active Count (Cohesive spacing, no reload icon)
                 HStack(spacing: 8) {
                     Text("Ventanas Mac")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
@@ -55,6 +57,24 @@ struct WindowSwitcherView: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Constants.Colors.cardBorder, lineWidth: 1))
                 .padding(.horizontal, 16)
                 
+                // Feedback Toast (Brief visual confirmation when an app/window is focused)
+                if let feedback = lastFocusedFeedback {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(Constants.Colors.gold)
+                        Text(feedback)
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Constants.Colors.accent.opacity(0.95), in: Capsule())
+                    .overlay(Capsule().stroke(Constants.Colors.gold.opacity(0.5), lineWidth: 1))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(5)
+                }
+                
                 // Content Body
                 Group {
                     if connectionManager.status != .connected {
@@ -91,8 +111,13 @@ struct WindowSwitcherView: View {
             }
         }
         .sheet(item: $selectedWindowForLayout) { window in
-            WindowLayoutPresets(windowID: window.id, windowTitle: window.windowTitle, appName: selectedAppName)
-                .presentationDetents([.medium, .large])
+            WindowLayoutPresets(
+                windowID: window.id,
+                windowTitle: window.windowTitle,
+                appName: selectedAppName,
+                isResizable: window.isResizable
+            )
+            .presentationDetents([.medium, .large])
         }
     }
     
@@ -100,9 +125,13 @@ struct WindowSwitcherView: View {
     
     private var windowsListView: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: 10) {
                 ForEach(windowStore.filteredApps) { app in
-                    appSectionCard(app)
+                    if app.windows.count <= 1 {
+                        singleWindowAppCard(app)
+                    } else {
+                        multiWindowAppCard(app)
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -114,26 +143,120 @@ struct WindowSwitcherView: View {
         }
     }
     
-    private func appSectionCard(_ app: MacApp) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // App Header with large 44x44 icon
-            HStack(spacing: 12) {
-                appIconView(for: app)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(app.name)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(Constants.Colors.textPrimary)
+    // MARK: - Single Window App Card (1-Tap Focus + Trailing Organizar Button)
+    
+    private func singleWindowAppCard(_ app: MacApp) -> some View {
+        let window = app.windows.first ?? MacWindow(id: "\(app.bundleID)_0", windowTitle: app.name, appBundleID: app.bundleID, isMinimized: false, bounds: nil)
+        
+        return HStack(spacing: 12) {
+            // Main Touch Area: 1-Tap Direct Focus
+            Button(action: {
+                triggerFocus(window: window, appName: app.name)
+            }) {
+                HStack(spacing: 12) {
+                    appIconView(for: app)
                     
-                    Text(app.bundleID)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Constants.Colors.textSecondary)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(app.name)
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundStyle(Constants.Colors.textPrimary)
+                            
+                            if window.isMinimized {
+                                Text("Minimizada")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Constants.Colors.pastelSageLight, in: Capsule())
+                                    .foregroundStyle(Constants.Colors.textTertiary)
+                            }
+                        }
+                        
+                        let subtitleText = (!window.windowTitle.isEmpty && window.windowTitle != app.name) ? window.windowTitle : app.bundleID
+                        Text(subtitleText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Constants.Colors.textSecondary)
+                            .lineLimit(1)
+                    }
+                    
+                    Spacer(minLength: 4)
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // Secondary Action: Organizar / Layout Button (Guaranteed 44x44pt Target)
+            Button(action: {
+                HapticManager.impact(.medium)
+                selectedAppName = app.name
+                selectedWindowForLayout = window
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "rectangle.split.2x1")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Organizar")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(Constants.Colors.accent)
+                .padding(.horizontal, 10)
+                .frame(minHeight: Constants.minTouchTarget)
+                .background(Constants.Colors.pastelSageLight, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Constants.Colors.cardBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(Constants.Colors.cardBackground, in: RoundedRectangle(cornerRadius: Constants.cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Constants.cornerRadius)
+                .stroke(Constants.Colors.cardBorder, lineWidth: 1)
+        )
+        .shadow(color: Constants.Colors.tileShadow, radius: 6, y: 2)
+        .contextMenu {
+            ForEach(WindowLayout.allCases, id: \.self) { layout in
+                Button {
+                    HapticManager.impact(.medium)
+                    connectionManager.send(command: .layoutWindow(windowID: window.id, layout: layout))
+                } label: {
+                    Label(layout.displayName, systemImage: layout.systemImage)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Multi-Window App Card (Clear Hierarchy without Repetitive Blocks)
+    
+    private func multiWindowAppCard(_ app: MacApp) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // App Header Row (Tap focuses frontmost window)
+            HStack(spacing: 12) {
+                Button(action: {
+                    if let firstWin = app.windows.first {
+                        triggerFocus(window: firstWin, appName: app.name)
+                    }
+                }) {
+                    HStack(spacing: 12) {
+                        appIconView(for: app)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(app.name)
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundStyle(Constants.Colors.textPrimary)
+                            
+                            Text(app.bundleID)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Constants.Colors.textSecondary)
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer(minLength: 4)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 
-                Spacer()
-                
-                Text("\(app.windows.count) \(app.windows.count == 1 ? "ventana" : "ventanas")")
+                // Window Count Badge
+                Text("\(app.windows.count) ventanas")
                     .font(.caption2.bold())
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
@@ -145,93 +268,89 @@ struct WindowSwitcherView: View {
             Divider()
                 .background(Constants.Colors.cardBorder)
             
-            // App Windows
-            VStack(spacing: 10) {
+            // Clean Sub-Windows List (No repeated app name)
+            VStack(spacing: 6) {
                 ForEach(app.windows) { window in
-                    windowRowItem(window, app: app)
+                    HStack(spacing: 10) {
+                        // Window Sub-row: 1-Tap Focus
+                        Button(action: {
+                            triggerFocus(window: window, appName: app.name)
+                        }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: window.isMinimized ? "minus.rectangle" : "macwindow")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(window.isMinimized ? Constants.Colors.textTertiary : Constants.Colors.accent)
+                                
+                                Text(window.windowTitle.isEmpty ? "Ventana Principal" : window.windowTitle)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(Constants.Colors.textPrimary)
+                                    .lineLimit(1)
+                                
+                                Spacer(minLength: 4)
+                                
+                                if let bounds = window.bounds {
+                                    Text("\(Int(bounds.width))×\(Int(bounds.height))")
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
+                                        .foregroundStyle(Constants.Colors.textSecondary)
+                                }
+                            }
+                            .frame(minHeight: Constants.minTouchTarget)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        // Trailing Organizar Button per window
+                        Button(action: {
+                            HapticManager.impact(.medium)
+                            selectedAppName = app.name
+                            selectedWindowForLayout = window
+                        }) {
+                            Image(systemName: "rectangle.split.2x1")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Constants.Colors.accent)
+                                .frame(width: 36, height: 36)
+                                .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Constants.Colors.cardBorder, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .frame(minWidth: Constants.minTouchTarget, minHeight: Constants.minTouchTarget)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Constants.Colors.backgroundSubtle, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
-        .padding(14)
+        .padding(12)
         .background(Constants.Colors.cardBackground, in: RoundedRectangle(cornerRadius: Constants.cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: Constants.cornerRadius)
                 .stroke(Constants.Colors.cardBorder, lineWidth: 1)
         )
-        .shadow(color: Constants.Colors.tileShadow, radius: 8, y: 3)
+        .shadow(color: Constants.Colors.tileShadow, radius: 6, y: 2)
     }
     
-    private func windowRowItem(_ window: MacWindow, app: MacApp) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Window Title & Bounds
-            HStack(spacing: 10) {
-                Image(systemName: window.isMinimized ? "minus.rectangle" : "macwindow")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(window.isMinimized ? Constants.Colors.textTertiary : Constants.Colors.accent)
-                
-                Text(window.windowTitle.isEmpty ? "Ventana Principal" : window.windowTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Constants.Colors.textPrimary)
-                    .lineLimit(2)
-                
-                Spacer()
-                
-                if let bounds = window.bounds {
-                    Text("\(Int(bounds.width))×\(Int(bounds.height))")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
-                        .foregroundStyle(Constants.Colors.textSecondary)
+    // MARK: - Focus Trigger Helper
+    
+    private func triggerFocus(window: MacWindow, appName: String) {
+        HapticManager.impact(.heavy)
+        connectionManager.send(command: .focusWindow(windowID: window.id))
+        
+        let title = window.windowTitle.isEmpty ? appName : window.windowTitle
+        withAnimation(.easeInOut(duration: 0.2)) {
+            lastFocusedFeedback = "Enfocada: \(title)"
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                if lastFocusedFeedback == "Enfocada: \(title)" {
+                    lastFocusedFeedback = nil
                 }
-            }
-            
-            // High-Hierarchy Actions Row: Enfocar (Primary) & Organizar (Secondary)
-            HStack(spacing: 10) {
-                // Primary Action: Enfocar (Direct 1-tap focus)
-                Button(action: {
-                    HapticManager.impact(.heavy)
-                    connectionManager.send(command: .focusWindow(windowID: window.id))
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("Enfocar")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .background(Constants.Colors.accent, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 1))
-                    .shadow(color: Color.black.opacity(0.2), radius: 3, y: 1)
-                }
-                .buttonStyle(.plain)
-                
-                // Secondary Action: Organizar / Layouts (Opens Bottom Sheet)
-                Button(action: {
-                    HapticManager.impact(.medium)
-                    selectedAppName = app.name
-                    selectedWindowForLayout = window
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "rectangle.split.2x1")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Organizar")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundStyle(Constants.Colors.textPrimary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Constants.Colors.cardBorder, lineWidth: 1))
-                    .shadow(color: Color.black.opacity(0.08), radius: 2, y: 1)
-                }
-                .buttonStyle(.plain)
             }
         }
-        .padding(12)
-        .background(Constants.Colors.backgroundSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
     
     @ViewBuilder
@@ -398,3 +517,4 @@ struct WindowSwitcherView: View {
         }
     }
 }
+

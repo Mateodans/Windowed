@@ -4,6 +4,34 @@ import os
 
 private let logger = Logger(subsystem: "com.windowed.companion", category: "WindowManager")
 
+public enum WindowOperationResult {
+    case success
+    case permissionDenied
+    case notResizable(appName: String)
+    case windowNotFound
+    case failed(reason: String)
+    
+    public var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
+    
+    public var userFacingMessage: String? {
+        switch self {
+        case .success:
+            return nil
+        case .permissionDenied:
+            return "Falta permiso de Accesibilidad en macOS. Otorgalo en Ajustes del Sistema > Privacidad y Seguridad > Accesibilidad."
+        case .notResizable(let appName):
+            return "\(appName) no permite reorganizar su ventana automáticamente (limitación del framework de la aplicación)."
+        case .windowNotFound:
+            return "No se encontró la ventana objetivo."
+        case .failed(let reason):
+            return reason
+        }
+    }
+}
+
 public class WindowManager {
     public static let shared = WindowManager()
     
@@ -70,13 +98,20 @@ public class WindowManager {
                             bounds = WindowBounds(x: Double(point.x), y: Double(point.y), width: Double(size.width), height: Double(size.height))
                         }
                         
+                        var isPosSettable: DarwinBoolean = false
+                        var isSizeSettable: DarwinBoolean = false
+                        _ = AXUIElementIsAttributeSettable(axWin, kAXPositionAttribute as CFString, &isPosSettable)
+                        _ = AXUIElementIsAttributeSettable(axWin, kAXSizeAttribute as CFString, &isSizeSettable)
+                        let isResizable = isPosSettable.boolValue || isSizeSettable.boolValue
+                        
                         let windowId = "\(pid)_\(idx)"
                         let macWin = MacWindow(
                             id: windowId,
                             windowTitle: displayTitle,
                             appBundleID: bundleID,
                             isMinimized: isMinimized,
-                            bounds: bounds
+                            bounds: bounds,
+                            isResizable: isResizable
                         )
                         macWindows.append(macWin)
                     }
@@ -89,12 +124,19 @@ public class WindowManager {
                         let title = (titleVal as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                         let displayTitle = title.isEmpty ? appName : title
                         
+                        var isPosSettable: DarwinBoolean = false
+                        var isSizeSettable: DarwinBoolean = false
+                        _ = AXUIElementIsAttributeSettable(axWin as! AXUIElement, kAXPositionAttribute as CFString, &isPosSettable)
+                        _ = AXUIElementIsAttributeSettable(axWin as! AXUIElement, kAXSizeAttribute as CFString, &isSizeSettable)
+                        let isResizable = isPosSettable.boolValue || isSizeSettable.boolValue
+                        
                         macWindows.append(MacWindow(
                             id: "\(pid)_0",
                             windowTitle: displayTitle,
                             appBundleID: bundleID,
                             isMinimized: false,
-                            bounds: nil
+                            bounds: nil,
+                            isResizable: isResizable
                         ))
                     }
                 }
@@ -121,7 +163,8 @@ public class WindowManager {
                         windowTitle: displayTitle,
                         appBundleID: bundleID,
                         isMinimized: false,
-                        bounds: bounds
+                        bounds: bounds,
+                        isResizable: true
                     )
                     macWindows.append(macWin)
                 }
@@ -134,7 +177,8 @@ public class WindowManager {
                     windowTitle: appName,
                     appBundleID: bundleID,
                     isMinimized: false,
-                    bounds: nil
+                    bounds: nil,
+                    isResizable: true
                 )
                 macWindows.append(defaultWin)
             }
@@ -198,124 +242,242 @@ public class WindowManager {
     // MARK: - Layout Window
     
     public func layoutWindow(windowID: String, layout: WindowLayout) -> Bool {
-        var targetWindow: AXUIElement?
+        return layoutWindowWithResult(windowID: windowID, layout: layout).isSuccess
+    }
+    
+    public func layoutWindowWithResult(windowID: String, layout: WindowLayout) -> WindowOperationResult {
+        // Explicit check: Is system accessibility permission granted?
+        guard AXIsProcessTrusted() else {
+            logger.error("Accessibility permission not granted at system level")
+            return .permissionDenied
+        }
+        
         var targetPID: pid_t?
+        var winIndex: Int = 0
         
         if windowID == "active" || windowID.isEmpty {
             if let frontApp = NSWorkspace.shared.frontmostApplication {
                 targetPID = frontApp.processIdentifier
-                let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
-                var focusedWin: AnyObject?
-                if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWin) == .success, let win = focusedWin {
-                    targetWindow = (win as! AXUIElement)
-                } else {
-                    var windowsValue: AnyObject?
-                    if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
-                       let winList = windowsValue as? [AXUIElement], let first = winList.first {
-                        targetWindow = first
-                    }
-                }
             }
         } else {
             let parts = windowID.split(separator: "_")
-            if parts.count >= 2, let pid = pid_t(parts[0]), let winIndex = Int(parts[1]) {
+            if parts.count >= 2, let pid = pid_t(parts[0]), let idx = Int(parts[1]) {
                 targetPID = pid
-                let appRef = AXUIElementCreateApplication(pid)
-                var windowsValue: AnyObject?
-                if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
-                   let winList = windowsValue as? [AXUIElement], winIndex < winList.count {
-                    targetWindow = winList[winIndex]
-                }
-                
-                // Fallback to focused or main window if index wasn't in kAXWindowsAttribute
-                if targetWindow == nil {
-                    var focusedWin: AnyObject?
-                    if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWin) == .success, let win = focusedWin {
-                        targetWindow = (win as! AXUIElement)
-                    } else if AXUIElementCopyAttributeValue(appRef, kAXMainWindowAttribute as CFString, &focusedWin) == .success, let win = focusedWin {
-                        targetWindow = (win as! AXUIElement)
-                    }
-                }
+                winIndex = idx
+            } else if let pid = pid_t(windowID) {
+                targetPID = pid
+            } else if let matchedApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == windowID }) {
+                targetPID = matchedApp.processIdentifier
             }
         }
         
-        // Ensure the target application is active so macOS permits window resizing/moving
+        // Step 1: Activate target application FIRST so macOS WindowServer exposes AX elements and allows manipulation
+        var appName = "La aplicación"
         if let pid = targetPID, let runningApp = NSRunningApplication(processIdentifier: pid) {
+            appName = runningApp.localizedName ?? appName
+            if runningApp.isHidden {
+                runningApp.unhide()
+            }
             runningApp.activate(options: [.activateIgnoringOtherApps])
+        } else if targetPID == nil, let frontApp = NSWorkspace.shared.frontmostApplication {
+            targetPID = frontApp.processIdentifier
+            appName = frontApp.localizedName ?? appName
+            frontApp.activate(options: [.activateIgnoringOtherApps])
+        }
+        
+        guard let pid = targetPID else {
+            logger.error("No valid PID found for layout windowID: \(windowID)")
+            return .windowNotFound
+        }
+        
+        let appRef = AXUIElementCreateApplication(pid)
+        var targetWindow: AXUIElement?
+        
+        // Step 2: Resolve target AXUIElement window with retry
+        for attempt in 0..<3 {
+            var windowsValue: AnyObject?
+            if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+               let winList = windowsValue as? [AXUIElement], !winList.isEmpty {
+                if winIndex < winList.count {
+                    targetWindow = winList[winIndex]
+                } else {
+                    targetWindow = winList.first
+                }
+                break
+            }
+            
+            var focusedWin: AnyObject?
+            if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWin) == .success, let win = focusedWin {
+                targetWindow = (win as! AXUIElement)
+                break
+            }
+            
+            var mainWin: AnyObject?
+            if AXUIElementCopyAttributeValue(appRef, kAXMainWindowAttribute as CFString, &mainWin) == .success, let win = mainWin {
+                targetWindow = (win as! AXUIElement)
+                break
+            }
+            
+            if attempt < 2 {
+                usleep(30_000) // 30ms pause for activation to settle
+            }
         }
         
         guard let axWin = targetWindow else {
-            logger.error("Could not find window to layout for ID \(windowID)")
-            return false
+            logger.error("Could not resolve AX window for PID \(pid), windowID \(windowID)")
+            if applyAppleScriptLayoutByPreset(appName: appName, layout: layout) {
+                return .success
+            }
+            return .notResizable(appName: appName)
         }
         
-        // Unminimize if minimized
+        // Step 3: Unminimize if minimized
         var isMin: AnyObject?
         if AXUIElementCopyAttributeValue(axWin, kAXMinimizedAttribute as CFString, &isMin) == .success, (isMin as? Bool) == true {
             AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
         
-        // Ensure standard window framing by resetting native full-screen if active
-        AXUIElementSetAttributeValue(axWin, "AXFullScreen" as CFString, kCFBooleanFalse)
-        
-        AXUIElementPerformAction(axWin, kAXRaiseAction as CFString)
-        
-        guard let screen = NSScreen.main else { return false }
-        let visibleFrame = screen.visibleFrame
-        
-        // Calculate new origin and size based on layout preset
-        let (newOrigin, newSize) = calculateFrame(for: layout, in: visibleFrame, screenHeight: screen.frame.height)
-        
-        var pos = newOrigin
-        var size = newSize
-        
-        guard let posValue = AXValueCreate(.cgPoint, &pos),
-              let sizeValue = AXValueCreate(.cgSize, &size) else {
-            return false
+        // Exit native macOS full-screen if active
+        var isFullScreen: AnyObject?
+        if AXUIElementCopyAttributeValue(axWin, "AXFullScreen" as CFString, &isFullScreen) == .success, (isFullScreen as? Bool) == true {
+            AXUIElementSetAttributeValue(axWin, "AXFullScreen" as CFString, kCFBooleanFalse)
+            usleep(80_000)
         }
         
-        // 1. Move position first
-        AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, posValue)
-        // 2. Set size
-        AXUIElementSetAttributeValue(axWin, kAXSizeAttribute as CFString, sizeValue)
-        // 3. Set position again to guarantee screen boundary adherence
-        AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, posValue)
+        AXUIElementPerformAction(axWin, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         
-        logger.info("Laid out window \(windowID) to \(layout.displayName)")
-        return true
-    }
-    
-    private func calculateFrame(for layout: WindowLayout, in visibleFrame: NSRect, screenHeight: CGFloat) -> (CGPoint, CGSize) {
+        // Step 4: Determine the screen where the window currently resides
+        let primaryScreen = NSScreen.screens.first ?? NSScreen.main ?? NSScreen()
+        let primaryHeight = primaryScreen.frame.height
+        var targetScreen: NSScreen = primaryScreen
+        
+        var currentPosVal: AnyObject?
+        var currentSizeVal: AnyObject?
+        if AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &currentPosVal) == .success,
+           AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &currentSizeVal) == .success,
+           let posVal = currentPosVal, let sizeVal = currentSizeVal {
+            var curPoint = CGPoint.zero
+            var curSize = CGSize.zero
+            AXValueGetValue(posVal as! AXValue, .cgPoint, &curPoint)
+            AXValueGetValue(sizeVal as! AXValue, .cgSize, &curSize)
+            
+            let axCenterX = curPoint.x + (curSize.width / 2.0)
+            let axCenterY = curPoint.y + (curSize.height / 2.0)
+            let cocoaPoint = NSPoint(x: axCenterX, y: primaryHeight - axCenterY)
+            
+            if let matchedScreen = NSScreen.screens.first(where: { $0.frame.contains(cocoaPoint) }) {
+                targetScreen = matchedScreen
+            }
+        }
+        
+        // Step 5: Calculate target origin and size in AX coordinates
+        let visibleFrame = targetScreen.visibleFrame
         let vx = visibleFrame.origin.x
-        // Flip y coordinates for Cocoa screen coordinates to Accessibility coordinates (top-left origin)
-        let vy = screenHeight - (visibleFrame.origin.y + visibleFrame.height)
+        let vy = primaryHeight - (visibleFrame.origin.y + visibleFrame.height)
         let vw = visibleFrame.width
         let vh = visibleFrame.height
         
-        let halfW = vw / 2.0
-        let halfH = vh / 2.0
+        let (targetOrigin, targetSize) = calculateLayoutFrame(layout: layout, vx: vx, vy: vy, vw: vw, vh: vh)
+        
+        var pos = targetOrigin
+        var size = targetSize
+        
+        guard let posValue = AXValueCreate(.cgPoint, &pos),
+              let sizeValue = AXValueCreate(.cgSize, &size) else {
+            return .failed(reason: "No se pudieron crear los valores de geometría AX")
+        }
+        
+        // Step 6: Safe multi-step layout to avoid WindowServer clamping
+        _ = AXUIElementSetAttributeValue(axWin, kAXSizeAttribute as CFString, sizeValue)
+        let posErr = AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, posValue)
+        let sizeErr = AXUIElementSetAttributeValue(axWin, kAXSizeAttribute as CFString, sizeValue)
+        _ = AXUIElementSetAttributeValue(axWin, kAXPositionAttribute as CFString, posValue)
+        
+        if posErr == .success || sizeErr == .success {
+            logger.info("Successfully laid out window \(windowID) to \(layout.displayName)")
+            return .success
+        } else if posErr == .apiDisabled || sizeErr == .apiDisabled {
+            logger.error("AX Error: API Disabled (Permission Denied)")
+            return .permissionDenied
+        } else {
+            logger.warning("AX layout returned posErr=\(posErr.rawValue), sizeErr=\(sizeErr.rawValue). Attempting AppleScript fallback for \(appName).")
+            if applyAppleScriptLayout(appName: appName, origin: targetOrigin, size: targetSize) {
+                return .success
+            }
+            return .notResizable(appName: appName)
+        }
+    }
+    
+    private func calculateLayoutFrame(layout: WindowLayout, vx: CGFloat, vy: CGFloat, vw: CGFloat, vh: CGFloat) -> (CGPoint, CGSize) {
+        let halfW = floor(vw / 2.0)
+        let halfH = floor(vh / 2.0)
         
         switch layout {
         case .leftHalf:
             return (CGPoint(x: vx, y: vy), CGSize(width: halfW, height: vh))
         case .rightHalf:
-            return (CGPoint(x: vx + halfW, y: vy), CGSize(width: halfW, height: vh))
+            return (CGPoint(x: vx + halfW, y: vy), CGSize(width: vw - halfW, height: vh))
         case .maximize:
             return (CGPoint(x: vx, y: vy), CGSize(width: vw, height: vh))
         case .topLeftQuarter:
             return (CGPoint(x: vx, y: vy), CGSize(width: halfW, height: halfH))
         case .topRightQuarter:
-            return (CGPoint(x: vx + halfW, y: vy), CGSize(width: halfW, height: halfH))
+            return (CGPoint(x: vx + halfW, y: vy), CGSize(width: vw - halfW, height: halfH))
         case .bottomLeftQuarter:
-            return (CGPoint(x: vx, y: vy + halfH), CGSize(width: halfW, height: halfH))
+            return (CGPoint(x: vx, y: vy + halfH), CGSize(width: halfW, height: vh - halfH))
         case .bottomRightQuarter:
-            return (CGPoint(x: vx + halfW, y: vy + halfH), CGSize(width: halfW, height: halfH))
+            return (CGPoint(x: vx + halfW, y: vy + halfH), CGSize(width: vw - halfW, height: vh - halfH))
         case .center:
-            let cw = vw * 0.75
-            let ch = vh * 0.8
-            let cx = vx + (vw - cw) / 2.0
-            let cy = vy + (vh - ch) / 2.0
+            let cw = floor(vw * 0.75)
+            let ch = floor(vh * 0.8)
+            let cx = vx + floor((vw - cw) / 2.0)
+            let cy = vy + floor((vh - ch) / 2.0)
             return (CGPoint(x: cx, y: cy), CGSize(width: cw, height: ch))
         }
     }
+    
+    private func applyAppleScriptLayout(appName: String, origin: CGPoint, size: CGSize) -> Bool {
+        guard !appName.isEmpty else { return false }
+        let left = Int(origin.x)
+        let top = Int(origin.y)
+        let right = Int(origin.x + size.width)
+        let bottom = Int(origin.y + size.height)
+        
+        let scriptString = """
+        tell application "\(appName)"
+            try
+                set bounds of front window to {\(left), \(top), \(right), \(bottom)}
+                return "ok"
+            on error
+                try
+                    set position of front window to {\(left), \(top)}
+                    set size of front window to {\(Int(size.width)), \(Int(size.height))}
+                    return "ok"
+                end try
+            end try
+        end tell
+        """
+        
+        var errorDict: NSDictionary?
+        if let script = NSAppleScript(source: scriptString) {
+            let result = script.executeAndReturnError(&errorDict)
+            if errorDict == nil && result.stringValue == "ok" {
+                logger.info("AppleScript layout succeeded for \(appName)")
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func applyAppleScriptLayoutByPreset(appName: String, layout: WindowLayout) -> Bool {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return false }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
+        let vf = screen.visibleFrame
+        let vx = vf.origin.x
+        let vy = primaryHeight - (vf.origin.y + vf.height)
+        let (origin, size) = calculateLayoutFrame(layout: layout, vx: vx, vy: vy, vw: vf.width, vh: vf.height)
+        return applyAppleScriptLayout(appName: appName, origin: origin, size: size)
+    }
 }
+

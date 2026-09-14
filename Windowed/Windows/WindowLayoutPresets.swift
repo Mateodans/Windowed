@@ -7,6 +7,7 @@ struct WindowLayoutPresets: View {
     let windowID: String
     let windowTitle: String
     var appName: String = "Ventana"
+    var isResizable: Bool = true
     
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -47,6 +48,27 @@ struct WindowLayoutPresets: View {
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.12), lineWidth: 1))
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
+                        
+                        // Non-resizable framework notice if app restricts AX resizing
+                        if !isResizable {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "info.circle.fill")
+                                    .font(.body)
+                                    .foregroundStyle(Constants.Colors.gold)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Reorganización restringida por la app")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.white)
+                                    Text("Esta aplicación (ej. Electron / Chromium) no expone redimensionamiento programático a macOS. 'Enfocar' funciona con normalidad.")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.white.opacity(0.8))
+                                }
+                            }
+                            .padding(12)
+                            .background(Color.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.5), lineWidth: 1))
+                            .padding(.horizontal, 16)
+                        }
                         
                         // Primary Actions Bar: Focus & Bring to Front
                         HStack(spacing: 12) {

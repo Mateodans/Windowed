@@ -9,54 +9,52 @@ struct WindowRowView: View {
     @State private var showLayoutPicker = false
     
     var body: some View {
-        Button(action: {
-            HapticManager.impact(.medium)
-            connectionManager.send(command: .focusWindow(windowID: window.id))
-        }) {
-            HStack(spacing: 12) {
-                Image(systemName: window.isMinimized ? "minus.rectangle" : "macwindow")
-                    .font(.body)
-                    .foregroundStyle(window.isMinimized ? .secondary : .primary)
-                    .frame(width: 24)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(window.windowTitle)
-                        .font(.body)
-                        .lineLimit(1)
-                        .foregroundStyle(window.isMinimized ? .secondary : .primary)
+        HStack(spacing: 10) {
+            // Main 1-tap focus area
+            Button(action: {
+                HapticManager.impact(.heavy)
+                connectionManager.send(command: .focusWindow(windowID: window.id))
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: window.isMinimized ? "minus.rectangle" : "macwindow")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(window.isMinimized ? Constants.Colors.textTertiary : Constants.Colors.accent)
+                        .frame(width: 24)
                     
-                    if let bounds = window.bounds {
-                        Text("\(Int(bounds.width))×\(Int(bounds.height))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(window.windowTitle.isEmpty ? "Ventana Principal" : window.windowTitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(window.isMinimized ? Constants.Colors.textTertiary : Constants.Colors.textPrimary)
+                        
+                        if let bounds = window.bounds {
+                            Text("\(Int(bounds.width))×\(Int(bounds.height))")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Constants.Colors.textSecondary)
+                        }
                     }
+                    
+                    Spacer(minLength: 4)
                 }
-                
-                Spacer()
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                .frame(minHeight: Constants.minTouchTarget)
+                .contentShape(Rectangle())
             }
-            .frame(minHeight: Constants.minTouchTarget)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                HapticManager.notification(.warning)
-                // Close window action
-            } label: {
-                Label("Close", systemImage: "xmark")
-            }
+            .buttonStyle(.plain)
             
-            Button {
-                HapticManager.impact(.light)
+            // Trailing Layout Button
+            Button(action: {
+                HapticManager.impact(.medium)
                 showLayoutPicker = true
-            } label: {
-                Label("Layout", systemImage: "rectangle.split.2x1")
+            }) {
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Constants.Colors.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Constants.Colors.cardBorder, lineWidth: 1))
             }
-            .tint(.blue)
+            .buttonStyle(.plain)
+            .frame(minWidth: Constants.minTouchTarget, minHeight: Constants.minTouchTarget)
         }
         .contextMenu {
             ForEach(WindowLayout.allCases, id: \.self) { layout in
@@ -69,8 +67,9 @@ struct WindowRowView: View {
             }
         }
         .sheet(isPresented: $showLayoutPicker) {
-            WindowLayoutPresets(windowID: window.id, windowTitle: window.windowTitle)
-                .presentationDetents([.medium])
+            WindowLayoutPresets(windowID: window.id, windowTitle: window.windowTitle, appName: appName)
+                .presentationDetents([.medium, .large])
         }
     }
 }
+

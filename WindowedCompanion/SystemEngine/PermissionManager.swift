@@ -9,12 +9,12 @@ public class PermissionManager: ObservableObject {
     public static let shared = PermissionManager()
     
     @Published public var hasAccessibility: Bool = false
-    @Published public var hasAutomation: Bool = true // AppleScript prompt occurs on first dispatch
+    @Published public var hasAutomation: Bool = true
     
     private var cancellables = Set<AnyCancellable>()
     
     public init() {
-        checkPermissions()
+        self.hasAccessibility = AXIsProcessTrusted()
         startPolling()
         listenToAppActivation()
     }
@@ -22,34 +22,35 @@ public class PermissionManager: ObservableObject {
     @discardableResult
     public func checkPermissions() -> Bool {
         let isTrusted = AXIsProcessTrusted()
-        if self.hasAccessibility != isTrusted {
-            DispatchQueue.main.async {
+        if Thread.isMainThread {
+            if self.hasAccessibility != isTrusted {
                 self.hasAccessibility = isTrusted
                 logger.info("Accessibility trust status updated: \(isTrusted)")
+            }
+        } else {
+            DispatchQueue.main.async {
+                if self.hasAccessibility != isTrusted {
+                    self.hasAccessibility = isTrusted
+                    logger.info("Accessibility trust status updated: \(isTrusted)")
+                }
             }
         }
         return isTrusted
     }
     
     public func requestAccessibility() {
-        let alreadyTrusted = AXIsProcessTrusted()
-        if alreadyTrusted {
-            DispatchQueue.main.async {
-                self.hasAccessibility = true
-            }
-            return
-        }
-        
-        // Explicit user request: invoke system prompt
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         let isTrusted = AXIsProcessTrustedWithOptions(options)
-        DispatchQueue.main.async {
+        if Thread.isMainThread {
             self.hasAccessibility = isTrusted
+        } else {
+            DispatchQueue.main.async {
+                self.hasAccessibility = isTrusted
+            }
         }
     }
     
     public func openAccessibilityPreferences() {
-        // Also call request to ensure TCC registers the app bundle
         requestAccessibility()
         
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
@@ -64,7 +65,7 @@ public class PermissionManager: ObservableObject {
     }
     
     private func startPolling() {
-        Timer.publish(every: 1.5, on: .main, in: .common)
+        Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkPermissions()
@@ -80,3 +81,4 @@ public class PermissionManager: ObservableObject {
             .store(in: &cancellables)
     }
 }
+

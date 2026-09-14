@@ -20,19 +20,36 @@ public struct MacWindow: Identifiable, Codable, Hashable, Sendable {
     public var appBundleID: String
     public var isMinimized: Bool
     public var bounds: WindowBounds?
+    public var isResizable: Bool
     
     public init(
         id: String,
         windowTitle: String,
         appBundleID: String,
         isMinimized: Bool,
-        bounds: WindowBounds? = nil
+        bounds: WindowBounds? = nil,
+        isResizable: Bool = true
     ) {
         self.id = id
         self.windowTitle = windowTitle
         self.appBundleID = appBundleID
         self.isMinimized = isMinimized
         self.bounds = bounds
+        self.isResizable = isResizable
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, windowTitle, appBundleID, isMinimized, bounds, isResizable
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        windowTitle = try container.decode(String.self, forKey: .windowTitle)
+        appBundleID = try container.decode(String.self, forKey: .appBundleID)
+        isMinimized = try container.decode(Bool.self, forKey: .isMinimized)
+        bounds = try container.decodeIfPresent(WindowBounds.self, forKey: .bounds)
+        isResizable = try container.decodeIfPresent(Bool.self, forKey: .isResizable) ?? true
     }
 }
 

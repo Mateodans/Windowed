@@ -8,6 +8,7 @@ struct MediaControlsView: View {
     @State private var isCollapsed = false
     @State private var showSliders = false
     @State private var inactivityTask: Task<Void, Never>?
+    @State private var decodedArtwork: UIImage? = nil
     
     // Duration before auto-shrinking when inactive
     private let inactivityDuration: TimeInterval = 5.0
@@ -24,6 +25,7 @@ struct MediaControlsView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.78), value: showSliders)
         .onChange(of: connectionManager.currentMedia) { _, newMedia in
             mediaStore.update(from: connectionManager)
+            updateDecodedArtwork(from: newMedia.albumArtBase64)
             // Expand and restart inactivity timer when song/state changes
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                 isCollapsed = false
@@ -41,11 +43,22 @@ struct MediaControlsView: View {
         }
         .onAppear {
             mediaStore.update(from: connectionManager)
+            updateDecodedArtwork(from: connectionManager.currentMedia.albumArtBase64)
             resetInactivityTimer()
         }
         .onDisappear {
             inactivityTask?.cancel()
         }
+    }
+    
+    private func updateDecodedArtwork(from base64: String?) {
+        guard let base64 = base64, !base64.isEmpty,
+              let data = Data(base64Encoded: base64),
+              let image = UIImage(data: data) else {
+            decodedArtwork = nil
+            return
+        }
+        decodedArtwork = image
     }
     
     // MARK: - Collapsed Mini-Pill (Compact State)
@@ -54,23 +67,26 @@ struct MediaControlsView: View {
         HStack(spacing: 10) {
             // Album Art / Mini Music Note
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Constants.Colors.pastelSageLight)
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 1)
-                    )
-                
-                if let artBase64 = mediaStore.state.albumArtBase64,
-                   let data = Data(base64Encoded: artBase64),
-                   let uiImage = UIImage(data: data) {
+                if let uiImage = decodedArtwork {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
                         .frame(width: 32, height: 32)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 0.8)
+                        )
+                        .shadow(color: Color.black.opacity(0.3), radius: 3, y: 1)
                 } else {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Constants.Colors.pastelSageLight)
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 1)
+                        )
+                    
                     Image(systemName: "music.note")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Constants.Colors.accent)
@@ -142,23 +158,33 @@ struct MediaControlsView: View {
             HStack(spacing: 12) {
                 // Album Art / Note Icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Constants.Colors.pastelSageLight)
-                        .frame(width: 38, height: 38)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 1)
-                        )
-                    
-                    if let artBase64 = mediaStore.state.albumArtBase64,
-                       let data = Data(base64Encoded: artBase64),
-                       let uiImage = UIImage(data: data) {
+                    if let uiImage = decodedArtwork {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: 38, height: 38)
+                            .frame(width: 40, height: 40)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(
+                                        LinearGradient(
+                                            colors: [Color.white.opacity(0.4), Constants.Colors.gold.opacity(0.35)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 1
+                                    )
+                            )
+                            .shadow(color: Color.black.opacity(0.35), radius: 5, y: 2)
                     } else {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Constants.Colors.pastelSageLight)
+                            .frame(width: 40, height: 40)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Constants.Colors.gold.opacity(0.4), lineWidth: 1)
+                            )
+                        
                         Image(systemName: "music.note")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(Constants.Colors.accent)
@@ -209,7 +235,7 @@ struct MediaControlsView: View {
                                 .overlay(
                                     Circle()
                                         .stroke(Constants.Colors.gold.opacity(0.8), lineWidth: 1.2)
-                                )
+                                    )
                                 .shadow(color: Constants.Colors.gold.opacity(0.3), radius: 6, y: 2)
                             
                             Image(systemName: mediaStore.state.isPlaying ? "pause.fill" : "play.fill")
