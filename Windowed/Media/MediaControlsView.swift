@@ -8,10 +8,13 @@ struct MediaControlsView: View {
     @State private var isCollapsed = false
     @State private var showSliders = false
     @State private var inactivityTask: Task<Void, Never>?
-    @State private var decodedArtwork: UIImage? = nil
     
     // Duration before auto-shrinking when inactive
     private let inactivityDuration: TimeInterval = 5.0
+    
+    private var activeMedia: MediaState {
+        connectionManager.currentMedia
+    }
     
     var body: some View {
         Group {
@@ -23,27 +26,25 @@ struct MediaControlsView: View {
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: isCollapsed)
         .animation(.spring(response: 0.35, dampingFraction: 0.78), value: showSliders)
-        .onChange(of: connectionManager.currentMedia) { _, newMedia in
+        .onChange(of: connectionManager.currentMedia) { _, _ in
             mediaStore.update(from: connectionManager)
-            updateDecodedArtwork(from: newMedia.albumArtBase64)
             // Expand and restart inactivity timer when song/state changes
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                 isCollapsed = false
             }
             resetInactivityTimer()
         }
-        .onChange(of: mediaStore.state.trackTitle) { _, _ in
+        .onChange(of: activeMedia.trackTitle) { _, _ in
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                 isCollapsed = false
             }
             resetInactivityTimer()
         }
-        .onChange(of: mediaStore.state.isPlaying) { _, _ in
+        .onChange(of: activeMedia.isPlaying) { _, _ in
             resetInactivityTimer()
         }
         .onAppear {
             mediaStore.update(from: connectionManager)
-            updateDecodedArtwork(from: connectionManager.currentMedia.albumArtBase64)
             resetInactivityTimer()
         }
         .onDisappear {
@@ -51,27 +52,13 @@ struct MediaControlsView: View {
         }
     }
     
-    private func updateDecodedArtwork(from base64: String?) {
-        guard let base64 = base64, !base64.isEmpty,
-              let data = Data(base64Encoded: base64),
-              let image = UIImage(data: data) else {
-            decodedArtwork = nil
-            return
-        }
-        decodedArtwork = image
-    }
-    
     private var displayedArtwork: UIImage? {
-        if let decodedArtwork {
-            return decodedArtwork
+        guard let base64 = (activeMedia.albumArtBase64 ?? mediaStore.state.albumArtBase64)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !base64.isEmpty,
+              let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+            return nil
         }
-        if let base64 = mediaStore.state.albumArtBase64 ?? connectionManager.currentMedia.albumArtBase64,
-           !base64.isEmpty,
-           let data = Data(base64Encoded: base64),
-           let image = UIImage(data: data) {
-            return image
-        }
-        return nil
+        return UIImage(data: data)
     }
     
     // MARK: - Collapsed Mini-Pill (Compact State)
@@ -108,7 +95,7 @@ struct MediaControlsView: View {
             
             // Compact Track Title & Expand Hint
             HStack(spacing: 6) {
-                Text(mediaStore.state.trackTitle.isEmpty ? "Música" : mediaStore.state.trackTitle)
+                Text(activeMedia.trackTitle.isEmpty || activeMedia.trackTitle == "Not Playing" ? "Música" : activeMedia.trackTitle)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(Constants.Colors.textPrimary)
                     .lineLimit(1)
@@ -136,7 +123,7 @@ struct MediaControlsView: View {
                         )
                         .shadow(color: Constants.Colors.gold.opacity(0.3), radius: 4, y: 1)
                     
-                    Image(systemName: mediaStore.state.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: activeMedia.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white)
                 }
@@ -206,12 +193,12 @@ struct MediaControlsView: View {
                 
                 // Track & Artist Info
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(mediaStore.state.trackTitle.isEmpty ? "Sin reproducción" : mediaStore.state.trackTitle)
+                    Text(activeMedia.trackTitle.isEmpty || activeMedia.trackTitle == "Not Playing" ? "Sin reproducción" : activeMedia.trackTitle)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(Constants.Colors.textPrimary)
                         .lineLimit(1)
                     
-                    Text(mediaStore.state.artist.isEmpty ? "Mac conectado" : mediaStore.state.artist)
+                    Text(activeMedia.artist.isEmpty ? "Mac conectado" : activeMedia.artist)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(Constants.Colors.textSecondary)
                         .lineLimit(1)
@@ -251,7 +238,7 @@ struct MediaControlsView: View {
                                     )
                                 .shadow(color: Constants.Colors.gold.opacity(0.3), radius: 6, y: 2)
                             
-                            Image(systemName: mediaStore.state.isPlaying ? "pause.fill" : "play.fill")
+                            Image(systemName: activeMedia.isPlaying ? "pause.fill" : "play.fill")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(.white)
                         }
@@ -304,18 +291,18 @@ struct MediaControlsView: View {
                         Button(action: {
                             HapticManager.impact(.light)
                             mediaStore.toggleMute()
-                            connectionManager.send(command: .media(action: mediaStore.state.isMuted ? .mute : .unmute))
+                            connectionManager.send(command: .media(action: activeMedia.isMuted ? .mute : .unmute))
                             resetInactivityTimer()
                         }) {
-                            Image(systemName: mediaStore.state.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            Image(systemName: activeMedia.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(mediaStore.state.isMuted ? Constants.Colors.disconnectedRed : Constants.Colors.accent)
+                                .foregroundStyle(activeMedia.isMuted ? Constants.Colors.disconnectedRed : Constants.Colors.accent)
                                 .frame(width: 28, height: 28)
                         }
                         .buttonStyle(.plain)
                         
                         Slider(value: Binding(
-                            get: { mediaStore.state.volume },
+                            get: { activeMedia.volume },
                             set: { newValue in
                                 mediaStore.setVolume(newValue)
                                 connectionManager.send(command: .setVolume(level: newValue))
@@ -324,7 +311,7 @@ struct MediaControlsView: View {
                         ), in: 0...1)
                         .tint(Constants.Colors.accent)
                         
-                        Text("\(Int(mediaStore.state.volume * 100))%")
+                        Text("\(Int(activeMedia.volume * 100))%")
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .foregroundStyle(Constants.Colors.textSecondary)
                             .frame(width: 34, alignment: .trailing)
@@ -338,7 +325,7 @@ struct MediaControlsView: View {
                             .frame(width: 28, height: 28)
                         
                         Slider(value: Binding(
-                            get: { mediaStore.state.brightness },
+                            get: { activeMedia.brightness },
                             set: { newValue in
                                 mediaStore.setBrightness(newValue)
                                 connectionManager.send(command: .setBrightness(level: newValue))
@@ -347,7 +334,7 @@ struct MediaControlsView: View {
                         ), in: 0...1)
                         .tint(Constants.Colors.gold)
                         
-                        Text("\(Int(mediaStore.state.brightness * 100))%")
+                        Text("\(Int(activeMedia.brightness * 100))%")
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .foregroundStyle(Constants.Colors.textSecondary)
                             .frame(width: 34, alignment: .trailing)

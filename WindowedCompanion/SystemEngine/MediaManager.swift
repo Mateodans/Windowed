@@ -139,8 +139,8 @@ public class MediaManager {
                 if player state is not stopped then
                     set tName to name of current track
                     set aName to artist of current track
-                    set pState to (player state is playing)
-                    return tName & "|||" & aName & "|||" & (pState as string)
+                    set pState to (player state as string)
+                    return tName & "|||" & aName & "|||" & pState
                 end if
             end tell
         end if
@@ -156,17 +156,20 @@ public class MediaManager {
         
         let title = parts[0]
         let artist = parts[1]
-        let isPlaying = parts[2].lowercased() == "true"
+        let stateStr = parts[2].lowercased()
+        let isPlaying = stateStr == "true" || stateStr == "playing"
         
         let trackKey = "music_\(title)_\(artist)"
         let artworkBase64: String?
         
-        if trackKey == lastTrackKey {
-            artworkBase64 = cachedArtworkBase64
+        if trackKey == lastTrackKey, let cached = cachedArtworkBase64 {
+            artworkBase64 = cached
         } else {
             artworkBase64 = extractAppleMusicArtwork()
-            lastTrackKey = trackKey
-            cachedArtworkBase64 = artworkBase64
+            if let artworkBase64 = artworkBase64 {
+                lastTrackKey = trackKey
+                cachedArtworkBase64 = artworkBase64
+            }
         }
         
         return MediaState(
@@ -199,13 +202,18 @@ public class MediaManager {
         let checkScript = """
         if application "Spotify" is running then
             tell application "Spotify"
-                if player state is not stopped then
-                    set tName to name of current track
-                    set aName to artist of current track
-                    set pState to (player state is playing)
-                    set aUrl to artwork url of current track
-                    return tName & "|||" & aName & "|||" & (pState as string) & "|||" & aUrl
-                end if
+                try
+                    if player state is not stopped then
+                        set tName to name of current track
+                        set aName to artist of current track
+                        set pState to (player state as string)
+                        set aUrl to ""
+                        try
+                            set aUrl to (artwork url of current track as string)
+                        end try
+                        return tName & "|||" & aName & "|||" & pState & "|||" & aUrl
+                    end if
+                end try
             end tell
         end if
         return "idle"
@@ -220,18 +228,21 @@ public class MediaManager {
         
         let title = parts[0]
         let artist = parts[1]
-        let isPlaying = parts[2].lowercased() == "true"
+        let stateStr = parts[2].lowercased()
+        let isPlaying = stateStr == "true" || stateStr == "playing"
         let artworkURL = parts.count >= 4 ? parts[3] : ""
         
         let trackKey = "spotify_\(title)_\(artist)"
         let artworkBase64: String?
         
-        if trackKey == lastTrackKey {
-            artworkBase64 = cachedArtworkBase64
+        if trackKey == lastTrackKey, let cached = cachedArtworkBase64 {
+            artworkBase64 = cached
         } else {
             artworkBase64 = extractSpotifyArtwork(from: artworkURL)
-            lastTrackKey = trackKey
-            cachedArtworkBase64 = artworkBase64
+            if let artworkBase64 = artworkBase64 {
+                lastTrackKey = trackKey
+                cachedArtworkBase64 = artworkBase64
+            }
         }
         
         return MediaState(
@@ -287,16 +298,18 @@ public class MediaManager {
         let trackKey = "mediaremote_\(title)_\(artist)"
         let artworkBase64: String?
         
-        if trackKey == lastTrackKey {
-            artworkBase64 = cachedArtworkBase64
+        if trackKey == lastTrackKey, let cached = cachedArtworkBase64 {
+            artworkBase64 = cached
         } else {
             if let rawArtData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data {
                 artworkBase64 = processAndCompressArtwork(rawArtData)
             } else {
                 artworkBase64 = nil
             }
-            lastTrackKey = trackKey
-            cachedArtworkBase64 = artworkBase64
+            if let artworkBase64 = artworkBase64 {
+                lastTrackKey = trackKey
+                cachedArtworkBase64 = artworkBase64
+            }
         }
         
         return MediaState(
