@@ -1,0 +1,30 @@
+# Xcode
+#
+# gitignore template for Apple iOS/macOS projects
+#
+.DS_Store
+*/.DS_Store
+
+# Build generated files
+build/
+build-mac/
+build_companion/
+.build/
+DerivedData/
+
+# User data
+*.xcuserstate
+project.xcworkspace/xcuserdata/
+*.xcuserdatad
+
+# Swift Package Manager
+.swiftpm/xcode
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# CocoaPods
+Pods/
